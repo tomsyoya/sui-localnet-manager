@@ -1,0 +1,387 @@
+import React, { useState, useEffect, useRef } from 'react'
+import {
+  Box,
+  Card,
+  CardContent,
+  Typography,
+  Button,
+  Grid,
+  Chip,
+  LinearProgress,
+  Alert,
+  List,
+  ListItem,
+  ListItemText,
+  Paper,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+} from '@mui/material'
+import {
+  PlayArrow as StartIcon,
+  Stop as StopIcon,
+  Refresh as RefreshIcon,
+  ExpandLess as ExpandLessIcon,
+  ExpandMore as ExpandMoreIcon,
+} from '@mui/icons-material'
+
+interface NetworkStatus {
+  running: boolean
+  nodeCount: number
+  blockHeight: number
+  transactions: number
+}
+
+interface LogEntry {
+  timestamp: string
+  level: 'info' | 'warn' | 'error' | 'debug'
+  message: string
+  source?: string
+}
+
+const Dashboard: React.FC = () => {
+  const [networkStatus, setNetworkStatus] = useState<NetworkStatus>({
+    running: false,
+    nodeCount: 0,
+    blockHeight: 0,
+    transactions: 0,
+  })
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+  const [logs, setLogs] = useState<LogEntry[]>([])
+  const [logExpanded, setLogExpanded] = useState(true)
+  const [logLevel, setLogLevel] = useState<string>('all')
+  const logListRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    // 初期状態の取得
+    refreshStatus()
+
+    // リアルタイム更新のためのイベントリスナー設定
+    if (window.electronAPI) {
+      window.electronAPI.sui.onStatusChange((status) => {
+        setNetworkStatus(status)
+      })
+
+      // リアルタイムログ更新
+      window.electronAPI.logs.onNewLog((newLog) => {
+        setLogs(prev => [newLog, ...prev].slice(0, 100)) // 最新100件を保持
+        
+        // 自動スクロール（新しいログが追加されたとき）
+        setTimeout(() => {
+          if (logListRef.current) {
+            logListRef.current.scrollTop = 0
+          }
+        }, 100)
+      })
+
+      // 初期ログロード
+      loadInitialLogs()
+    }
+
+    // クリーンアップ
+    return () => {
+      if (window.electronAPI) {
+        window.electronAPI.sui.removeAllListeners()
+        window.electronAPI.logs.removeAllListeners()
+      }
+    }
+  }, [])
+
+  const loadInitialLogs = async () => {
+    try {
+      if (window.electronAPI) {
+        const logEntries = await window.electronAPI.logs.getLogs({ limit: 50 })
+        setLogs(logEntries)
+      }
+    } catch (error) {
+      console.error('Failed to load initial logs:', error)
+    }
+  }
+
+  const refreshStatus = async () => {
+    try {
+      if (window.electronAPI) {
+        const status = await window.electronAPI.sui.getStatus()
+        setNetworkStatus(status)
+      }
+    } catch (error) {
+      console.error('Failed to get status:', error)
+    }
+  }
+
+  const handleStart = async () => {
+    setLoading(true)
+    setMessage(null)
+    try {
+      if (window.electronAPI) {
+        const result = await window.electronAPI.sui.start()
+        setMessage(result.message)
+        if (result.success) {
+          // リアルタイム更新はイベントリスナーで処理される
+          console.log('SUI network start requested')
+        }
+      }
+    } catch (error) {
+      setMessage('ネットワークの起動に失敗しました')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleStop = async () => {
+    setLoading(true)
+    setMessage(null)
+    try {
+      if (window.electronAPI) {
+        const result = await window.electronAPI.sui.stop()
+        setMessage(result.message)
+        if (result.success) {
+          // リアルタイム更新はイベントリスナーで処理される
+          console.log('SUI network stop requested')
+        }
+      }
+    } catch (error) {
+      setMessage('ネットワークの停止に失敗しました')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const getLogLevelColor = (level: string) => {
+    switch (level) {
+      case 'error': return 'error'
+      case 'warn': return 'warning'
+      case 'info': return 'info'
+      case 'debug': return 'default'
+      default: return 'default'
+    }
+  }
+
+  const formatTimestamp = (timestamp: string) => {
+    return new Date(timestamp).toLocaleTimeString('ja-JP')
+  }
+
+  const filteredLogs = logs.filter(log => {
+    if (logLevel === 'all') return true
+    return log.level === logLevel
+  })
+
+  return (
+    <Box>
+      <Typography variant="h4" gutterBottom>
+        ダッシュボード
+      </Typography>
+
+      {message && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          {message}
+        </Alert>
+      )}
+
+      <Grid container spacing={3}>
+        {/* ネットワーク制御 */}
+        <Grid item xs={12}>
+          <Card>
+            <CardContent>
+              <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+                <Typography variant="h6">ネットワーク制御</Typography>
+                <Chip
+                  label={networkStatus.running ? '実行中' : '停止中'}
+                  color={networkStatus.running ? 'success' : 'default'}
+                />
+              </Box>
+              
+              {loading && <LinearProgress sx={{ mb: 2 }} />}
+              
+              <Box display="flex" gap={2}>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  startIcon={<StartIcon />}
+                  onClick={handleStart}
+                  disabled={networkStatus.running || loading}
+                >
+                  ネットワーク開始
+                </Button>
+                <Button
+                  variant="contained"
+                  color="error"
+                  startIcon={<StopIcon />}
+                  onClick={handleStop}
+                  disabled={!networkStatus.running || loading}
+                >
+                  ネットワーク停止
+                </Button>
+                <Button
+                  variant="outlined"
+                  startIcon={<RefreshIcon />}
+                  onClick={refreshStatus}
+                  disabled={loading}
+                >
+                  状態更新
+                </Button>
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* ネットワーク統計 */}
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                ノード数
+              </Typography>
+              <Typography variant="h3" color="primary">
+                {networkStatus.nodeCount}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                ブロック高
+              </Typography>
+              <Typography variant="h3" color="primary">
+                {networkStatus.blockHeight.toLocaleString()}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                処理済みトランザクション
+              </Typography>
+              <Typography variant="h3" color="primary">
+                {networkStatus.transactions}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        <Grid item xs={12} md={6}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>
+                ネットワーク状態
+              </Typography>
+              <Typography variant="h3" color={networkStatus.running ? 'success.main' : 'text.secondary'}>
+                {networkStatus.running ? '正常' : '停止'}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* リアルタイムログビューア */}
+        <Grid item xs={12}>
+          <Card>
+            <CardContent>
+              <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+                <Typography variant="h6">
+                  リアルタイムログ
+                </Typography>
+                <Box display="flex" alignItems="center" gap={2}>
+                  <FormControl size="small" sx={{ minWidth: 120 }}>
+                    <InputLabel>レベル</InputLabel>
+                    <Select
+                      value={logLevel}
+                      label="レベル"
+                      onChange={(e) => setLogLevel(e.target.value)}
+                    >
+                      <MenuItem value="all">すべて</MenuItem>
+                      <MenuItem value="error">エラー</MenuItem>
+                      <MenuItem value="warn">警告</MenuItem>
+                      <MenuItem value="info">情報</MenuItem>
+                      <MenuItem value="debug">デバッグ</MenuItem>
+                    </Select>
+                  </FormControl>
+                  <Button
+                    size="small"
+                    onClick={() => setLogExpanded(!logExpanded)}
+                    endIcon={logExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                  >
+                    {logExpanded ? '折りたたみ' : '展開'}
+                  </Button>
+                </Box>
+              </Box>
+              
+              {logExpanded && (
+                <Paper variant="outlined" sx={{ maxHeight: 300, overflow: 'hidden' }}>
+                  <Box
+                    ref={logListRef}
+                    sx={{
+                      maxHeight: 300,
+                      overflowY: 'auto',
+                      backgroundColor: 'background.paper',
+                    }}
+                  >
+                    <List dense>
+                      {filteredLogs.length > 0 ? (
+                        filteredLogs.map((log, index) => (
+                          <ListItem key={index} divider={index < filteredLogs.length - 1}>
+                            <ListItemText
+                              primary={
+                                <Box display="flex" alignItems="center" gap={1} mb={0.5}>
+                                  <Chip
+                                    label={log.level.toUpperCase()}
+                                    size="small"
+                                    color={getLogLevelColor(log.level) as any}
+                                  />
+                                  {log.source && (
+                                    <Chip
+                                      label={log.source}
+                                      size="small"
+                                      variant="outlined"
+                                      color="primary"
+                                    />
+                                  )}
+                                  <Typography variant="caption" color="text.secondary">
+                                    {formatTimestamp(log.timestamp)}
+                                  </Typography>
+                                </Box>
+                              }
+                              secondary={
+                                <Typography
+                                  variant="body2"
+                                  sx={{
+                                    fontFamily: 'monospace',
+                                    fontSize: '0.875rem',
+                                    wordBreak: 'break-all',
+                                    whiteSpace: 'pre-wrap',
+                                  }}
+                                >
+                                  {log.message}
+                                </Typography>
+                              }
+                            />
+                          </ListItem>
+                        ))
+                      ) : (
+                        <ListItem>
+                          <ListItemText
+                            primary="ログエントリがありません"
+                            secondary="ネットワークを開始するとログが表示されます"
+                          />
+                        </ListItem>
+                      )}
+                    </List>
+                  </Box>
+                </Paper>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
+    </Box>
+  )
+}
+
+export default Dashboard

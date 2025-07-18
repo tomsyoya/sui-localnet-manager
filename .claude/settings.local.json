@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run build:main:*)",
+      "Bash(npm run dev:*)",
+      "Bash(sui:*)",
+      "Bash(timeout:*)",
+      "Bash(gtimeout:*)"
+    ],
+    "deny": []
+  }
+}
