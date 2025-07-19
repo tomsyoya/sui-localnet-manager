@@ -173,6 +173,7 @@ async function initializeServices(): Promise<void> {
 
     // IPCハンドラーを初期化
     ipcHandlers = new IPCHandlers(suiService, configService, logService)
+    await ipcHandlers.initialize()
     ipcHandlers.setupServiceEvents(mainWindow)
 
     logService.logApp('info', 'Application services initialized successfully')

@@ -8,6 +8,7 @@ export class IPCHandlers {
   private configService: ConfigService
   private logService: LogService
   private mainWindow: Electron.BrowserWindow | null = null
+  private isReady: boolean = false
 
   constructor(
     suiService: SuiService,
@@ -18,7 +19,17 @@ export class IPCHandlers {
     this.configService = configService
     this.logService = logService
     this.setupHandlers()
-    this.loadInitialSettings()
+  }
+
+  async initialize(): Promise<void> {
+    await this.loadInitialSettings()
+    this.isReady = true
+  }
+
+  private ensureReady(): void {
+    if (!this.isReady) {
+      throw new Error('IPC handlers not initialized. Call initialize() first.')
+    }
   }
 
   private async loadInitialSettings(): Promise<void> {
@@ -38,6 +49,7 @@ export class IPCHandlers {
     // SUI関連のハンドラー
     ipcMain.handle('sui:start', async () => {
       try {
+        this.ensureReady()
         const activeProfile = await this.configService.getActiveProfile()
         const config = activeProfile ? {
           port: activeProfile.port,
@@ -86,6 +98,7 @@ export class IPCHandlers {
 
     ipcMain.handle('sui:checkInstallation', async () => {
       try {
+        this.ensureReady()
         return await this.suiService.checkInstallation()
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error'
@@ -232,6 +245,7 @@ export class IPCHandlers {
 
     ipcMain.handle('config:saveSettings', async (_, settings) => {
       try {
+        this.ensureReady()
         const result = await this.configService.saveSettings(settings)
         if (result.success) {
           this.logService.logApp('info', 'Settings saved successfully')
