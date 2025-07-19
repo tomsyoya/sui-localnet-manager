@@ -105,44 +105,156 @@ export class SuiService extends EventEmitter {
 
   async checkExistingProcesses(): Promise<{ processes: Array<{ pid: number; command: string; port?: string }> }> {
     try {
-      const { spawn } = await import('child_process')
+      // Try platform-specific approach first (pgrep for Unix-like systems)
+      const processes = await this.findProcessesWithPgrep()
+      if (processes.length > 0) {
+        return { processes }
+      }
       
-      return new Promise((resolve) => {
-        const psProcess = spawn('ps', ['aux'], { stdio: 'pipe' })
-        let output = ''
-        
-        psProcess.stdout?.on('data', (data) => {
-          output += data.toString()
-        })
-        
-        psProcess.on('close', () => {
-          const lines = output.split('\n')
-          const suiProcesses = lines
-            .filter(line => line.includes('sui start') || line.includes('sui-test-validator'))
-            .map(line => {
-              const parts = line.trim().split(/\s+/)
-              const pid = parseInt(parts[1])
-              const command = parts.slice(10).join(' ')
-              
-              // ポート番号を抽出
-              const portMatch = command.match(/--fullnode-rpc-port\s+(\d+)|--port\s+(\d+)/)
-              const port = portMatch ? (portMatch[1] || portMatch[2]) : undefined
-              
-              return { pid, command, port }
-            })
-            .filter(process => !isNaN(process.pid))
-          
-          resolve({ processes: suiProcesses })
-        })
-        
-        psProcess.on('error', () => {
-          resolve({ processes: [] })
-        })
-      })
+      // Fallback to regex-based ps parsing if pgrep fails
+      return await this.findProcessesWithPs()
     } catch (error) {
       this.emit('log', { level: 'error', message: `プロセス検出エラー: ${error instanceof Error ? error.message : 'Unknown error'}` })
       return { processes: [] }
     }
+  }
+
+  private async findProcessesWithPgrep(): Promise<Array<{ pid: number; command: string; port?: string }>> {
+    const { spawn } = await import('child_process')
+    
+    try {
+      // Use pgrep to find PIDs, then get full command lines
+      const suiPatterns = ['sui start', 'sui-test-validator']
+      const allProcesses: Array<{ pid: number; command: string; port?: string }> = []
+      
+      for (const pattern of suiPatterns) {
+        const pids = await this.getPidsWithPgrep(pattern)
+        
+        for (const pid of pids) {
+          const command = await this.getCommandForPid(pid)
+          if (command) {
+            const port = this.extractPortFromCommand(command)
+            allProcesses.push({ pid, command, port })
+          }
+        }
+      }
+      
+      return allProcesses
+    } catch (error) {
+      this.emit('log', { level: 'debug', message: `pgrep方式でのプロセス検出に失敗: ${error instanceof Error ? error.message : 'Unknown error'}` })
+      return []
+    }
+  }
+
+  private async getPidsWithPgrep(pattern: string): Promise<number[]> {
+    const { spawn } = await import('child_process')
+    
+    return new Promise((resolve, reject) => {
+      const pgrepProcess = spawn('pgrep', ['-f', pattern], { stdio: 'pipe' })
+      let output = ''
+      
+      pgrepProcess.stdout?.on('data', (data) => {
+        output += data.toString()
+      })
+      
+      pgrepProcess.on('close', (code) => {
+        if (code === 0 && output.trim()) {
+          const pids = output.trim().split('\n')
+            .map(pid => parseInt(pid.trim()))
+            .filter(pid => !isNaN(pid))
+          resolve(pids)
+        } else {
+          resolve([])
+        }
+      })
+      
+      pgrepProcess.on('error', (error) => {
+        reject(error)
+      })
+    })
+  }
+
+  private async getCommandForPid(pid: number): Promise<string | null> {
+    const { spawn } = await import('child_process')
+    
+    return new Promise((resolve) => {
+      const psProcess = spawn('ps', ['-p', pid.toString(), '-o', 'command='], { stdio: 'pipe' })
+      let output = ''
+      
+      psProcess.stdout?.on('data', (data) => {
+        output += data.toString()
+      })
+      
+      psProcess.on('close', (code) => {
+        if (code === 0 && output.trim()) {
+          resolve(output.trim())
+        } else {
+          resolve(null)
+        }
+      })
+      
+      psProcess.on('error', () => {
+        resolve(null)
+      })
+    })
+  }
+
+  private async findProcessesWithPs(): Promise<{ processes: Array<{ pid: number; command: string; port?: string }> }> {
+    const { spawn } = await import('child_process')
+    
+    return new Promise((resolve) => {
+      // Use ps with specific format to get PID and command
+      const psProcess = spawn('ps', ['axo', 'pid,command'], { stdio: 'pipe' })
+      let output = ''
+      
+      psProcess.stdout?.on('data', (data) => {
+        output += data.toString()
+      })
+      
+      psProcess.on('close', () => {
+        const processes = this.parseProcessLines(output)
+        resolve({ processes })
+      })
+      
+      psProcess.on('error', () => {
+        resolve({ processes: [] })
+      })
+    })
+  }
+
+  private parseProcessLines(output: string): Array<{ pid: number; command: string; port?: string }> {
+    const lines = output.split('\n')
+    const suiProcesses: Array<{ pid: number; command: string; port?: string }> = []
+    
+    for (const line of lines) {
+      const trimmedLine = line.trim()
+      if (!trimmedLine || trimmedLine.startsWith('PID')) {
+        continue
+      }
+      
+      // Use regex to extract PID and command more reliably
+      const match = trimmedLine.match(/^(\d+)\s+(.+)$/)
+      if (!match) {
+        continue
+      }
+      
+      const pid = parseInt(match[1])
+      const command = match[2]
+      
+      // Check if this is a SUI process
+      if ((command.includes('sui start') || command.includes('sui-test-validator')) && !isNaN(pid)) {
+        const port = this.extractPortFromCommand(command)
+        suiProcesses.push({ pid, command, port })
+      }
+    }
+    
+    return suiProcesses
+  }
+
+  private extractPortFromCommand(command: string): string | undefined {
+    // Extract port number from command line arguments
+    const portMatch = command.match(/--fullnode-rpc-port\s+(\d+)|--port\s+(\d+)|--rpc-port\s+(\d+)/)
+    return portMatch ? (portMatch[1] || portMatch[2] || portMatch[3]) : undefined
   }
 
   async getProcessStatus(pid: number): Promise<{ running: boolean; details?: any }> {
