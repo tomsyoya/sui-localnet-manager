@@ -67,6 +67,9 @@ const Dashboard: React.FC = () => {
     transactions: 0,
   })
   const [loading, setLoading] = useState(false)
+  const [startingNetwork, setStartingNetwork] = useState(false)
+  const [stoppingNetwork, setStoppingNetwork] = useState(false)
+  const [networkStartupCompleted, setNetworkStartupCompleted] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [logExpanded, setLogExpanded] = useState(true)
@@ -74,31 +77,42 @@ const Dashboard: React.FC = () => {
   const [existingProcesses, setExistingProcesses] = useState<ExistingProcess[]>([])
   const [processExpanded, setProcessExpanded] = useState(false)
   const processMonitorIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const networkStartupMonitorRef = useRef<NodeJS.Timeout | null>(null)
   const logListRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     // 初期状態の取得
     refreshStatus()
 
+
+
     // 初期ログロード
     loadInitialLogs()
     
-    // 既存プロセス検出
+    // 既存プロセス検出（ネットワーク状態も同時に更新）
     detectExistingProcesses()
     
     // プロセス監視の開始
     startProcessMonitoring()
 
-    // 定期的な状態更新（5秒間隔）
-    const statusInterval = setInterval(() => {
-      refreshStatus()
-    }, 5000)
+    // 定期的な状態更新（3秒間隔に短縮）
+    const statusInterval = setInterval(async () => {
+      // 既存プロセス検出を先に実行してネットワーク状態を同期
+      await detectExistingProcesses()
+      // 既存プロセスの状態に応じて詳細情報を取得
+      // （detectExistingProcessesで既にrefreshStatusが適切に呼ばれている）
+    }, 3000)
 
     // クリーンアップ
     return () => {
       // プロセス監視の停止
       if (processMonitorIntervalRef.current) {
         clearInterval(processMonitorIntervalRef.current)
+      }
+      
+      // ネットワーク起動監視の停止
+      if (networkStartupMonitorRef.current) {
+        clearInterval(networkStartupMonitorRef.current)
       }
       
       // 状態更新の停止
@@ -125,11 +139,20 @@ const Dashboard: React.FC = () => {
     }
   }
 
-  const refreshStatus = async () => {
+  const refreshStatus = async (preserveRunningState = false) => {
     try {
       if (window.electronAPI) {
         const status = await window.electronAPI.sui.getStatus()
-        setNetworkStatus(status)
+        
+        if (preserveRunningState) {
+          // 既存プロセスで running: true が設定されている場合は維持
+          setNetworkStatus(prev => ({
+            ...status,
+            running: prev.running || status.running
+          }))
+        } else {
+          setNetworkStatus(status)
+        }
       }
     } catch (error) {
       console.error('Failed to get status:', error)
@@ -141,6 +164,25 @@ const Dashboard: React.FC = () => {
       if (window.electronAPI) {
         const result = await window.electronAPI.sui.detectExistingNetwork()
         setExistingProcesses(result.processes || [])
+        
+        // 既存プロセスが検知された場合、ネットワーク状態を更新
+        if (result.found && result.processes.length > 0) {
+          // ネットワーク状態を実行中に更新
+          setNetworkStatus(prev => ({
+            ...prev,
+            running: true
+          }))
+          
+          // 詳細なネットワーク状態も取得（running状態を維持）
+          await refreshStatus(true)
+        } else if (!result.found || result.processes.length === 0) {
+          // プロセスが見つからない場合は、SuiServiceの状態を確認してから決定
+          const suiStatus = await window.electronAPI.sui.getStatus()
+          setNetworkStatus(prev => ({
+            ...prev,
+            running: suiStatus.running // SuiServiceの判定を優先
+          }))
+        }
       }
     } catch (error) {
       console.error('Failed to detect existing processes:', error)
@@ -148,16 +190,68 @@ const Dashboard: React.FC = () => {
   }
 
   const startProcessMonitoring = () => {
-    // プロセス監視間隔を5秒に設定
+    // プロセス監視間隔を3秒に設定
     const interval = setInterval(() => {
       if (processExpanded) {
         detectExistingProcesses()
       }
-    }, 5000)
+    }, 3000)
     
     processMonitorIntervalRef.current = interval
   }
 
+  const startNetworkStartupMonitoring = () => {
+    // 既存の監視を停止
+    if (networkStartupMonitorRef.current) {
+      clearInterval(networkStartupMonitorRef.current)
+    }
+
+    let attempts = 0
+    const maxAttempts = 30 // 60秒間（2秒間隔 × 30回）
+
+    const monitorInterval = setInterval(async () => {
+      attempts++
+      
+      try {
+        // 既存プロセスを先に確認（これによりネットワーク状態も適切に更新される）
+        await detectExistingProcesses()
+        
+        // ネットワークが起動していれば監視を停止
+        // detectExistingProcessesが状態を適切に設定するので、その後の状態をチェック
+        setTimeout(() => {
+          setNetworkStatus(current => {
+            if (current.running) {
+              if (networkStartupMonitorRef.current) {
+                clearInterval(networkStartupMonitorRef.current)
+                networkStartupMonitorRef.current = null
+                setStartingNetwork(false)
+                setNetworkStartupCompleted(true)
+                setMessage('ネットワークが正常に起動しました')
+                
+                // 3秒後に完了状態をリセット
+                setTimeout(() => {
+                  setNetworkStartupCompleted(false)
+                }, 3000)
+              }
+            }
+            return current
+          })
+        }, 100)
+        
+        // 最大試行回数に達したら監視を停止
+        if (attempts >= maxAttempts) {
+          clearInterval(networkStartupMonitorRef.current!)
+          networkStartupMonitorRef.current = null
+          setStartingNetwork(false)
+          setMessage('ネットワーク起動の確認がタイムアウトしました')
+        }
+      } catch (error) {
+        console.error('Network startup monitoring error:', error)
+      }
+    }, 2000) // 2秒間隔に短縮
+
+    networkStartupMonitorRef.current = monitorInterval
+  }
 
   const handleKillProcess = async (pid: number) => {
     try {
@@ -238,40 +332,66 @@ const Dashboard: React.FC = () => {
   }
 
   const handleStart = async () => {
-    setLoading(true)
+    setStartingNetwork(true)
+    setNetworkStartupCompleted(false) // 完了状態をリセット
     setMessage(null)
     try {
       if (window.electronAPI) {
         const result = await window.electronAPI.sui.start()
         setMessage(result.message)
         if (result.success) {
-          // リアルタイム更新はイベントリスナーで処理される
-          console.log('SUI network start requested')
+          // ネットワーク起動後の監視を開始
+          startNetworkStartupMonitoring()
+          
+          // 即座に状態を更新（複数回実行）
+          setTimeout(async () => {
+            await refreshStatus()
+            await detectExistingProcesses()
+          }, 500)
+          
+          setTimeout(async () => {
+            await refreshStatus()
+            await detectExistingProcesses()
+          }, 1500)
+          
+          console.log('SUI network start requested and monitoring started')
+        } else {
+          // 起動に失敗した場合はstartingNetworkをfalseに
+          setStartingNetwork(false)
         }
       }
     } catch (error) {
       setMessage('ネットワークの起動に失敗しました')
-    } finally {
-      setLoading(false)
+      setStartingNetwork(false)
     }
   }
 
   const handleStop = async () => {
-    setLoading(true)
+    setStoppingNetwork(true)
+    setNetworkStartupCompleted(false) // 完了状態をリセット
     setMessage(null)
     try {
       if (window.electronAPI) {
+        // 起動監視を停止
+        if (networkStartupMonitorRef.current) {
+          clearInterval(networkStartupMonitorRef.current)
+          networkStartupMonitorRef.current = null
+        }
+        
         const result = await window.electronAPI.sui.stop()
         setMessage(result.message)
         if (result.success) {
-          // リアルタイム更新はイベントリスナーで処理される
+          // 即座に状態を更新
+          await refreshStatus()
+          await detectExistingProcesses()
+          
           console.log('SUI network stop requested')
         }
       }
     } catch (error) {
       setMessage('ネットワークの停止に失敗しました')
     } finally {
-      setLoading(false)
+      setStoppingNetwork(false)
     }
   }
 
@@ -319,7 +439,25 @@ const Dashboard: React.FC = () => {
                 />
               </Box>
               
-              {loading && <LinearProgress sx={{ mb: 2 }} />}
+              {(startingNetwork || stoppingNetwork) && (
+                <LinearProgress 
+                  sx={{ mb: 2 }} 
+                  color={startingNetwork ? "primary" : "secondary"}
+                />
+              )}
+              {networkStartupCompleted && (
+                <LinearProgress 
+                  variant="determinate" 
+                  value={100} 
+                  color="success" 
+                  sx={{ 
+                    mb: 2,
+                    '& .MuiLinearProgress-bar': {
+                      transition: 'transform 0.5s ease-in-out'
+                    }
+                  }} 
+                />
+              )}
               
               <Box display="flex" gap={2}>
                 <Button
@@ -327,7 +465,7 @@ const Dashboard: React.FC = () => {
                   color="primary"
                   startIcon={<StartIcon />}
                   onClick={handleStart}
-                  disabled={networkStatus.running || loading}
+                  disabled={networkStatus.running || startingNetwork}
                 >
                   ネットワーク開始
                 </Button>
@@ -336,7 +474,7 @@ const Dashboard: React.FC = () => {
                   color="error"
                   startIcon={<StopIcon />}
                   onClick={handleStop}
-                  disabled={!networkStatus.running || loading}
+                  disabled={!networkStatus.running || stoppingNetwork}
                 >
                   ネットワーク停止
                 </Button>
@@ -347,7 +485,7 @@ const Dashboard: React.FC = () => {
                     refreshStatus()
                     detectExistingProcesses()
                   }}
-                  disabled={loading}
+                  disabled={false}
                 >
                   状態更新
                 </Button>
@@ -356,7 +494,7 @@ const Dashboard: React.FC = () => {
                   color="info"
                   startIcon={<NetworkCheckIcon />}
                   onClick={handleVerifyConnection}
-                  disabled={loading}
+                  disabled={false}
                 >
                   接続確認
                 </Button>
@@ -365,7 +503,7 @@ const Dashboard: React.FC = () => {
                   color="warning"
                   startIcon={<SyncIcon />}
                   onClick={handleSyncWithExisting}
-                  disabled={loading}
+                  disabled={false}
                 >
                   既存と同期
                 </Button>
@@ -447,7 +585,7 @@ const Dashboard: React.FC = () => {
                       color="error"
                       startIcon={<DeleteSweepIcon />}
                       onClick={handleKillAllProcesses}
-                      disabled={loading}
+                      disabled={false}
                     >
                       すべて停止
                     </Button>
@@ -478,7 +616,7 @@ const Dashboard: React.FC = () => {
                                 color="error"
                                 startIcon={<DeleteIcon />}
                                 onClick={() => handleKillProcess(process.pid)}
-                                disabled={loading}
+                                disabled={false}
                               >
                                 停止
                               </Button>
