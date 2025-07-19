@@ -192,7 +192,7 @@ export class SuiService extends EventEmitter {
     }
   }
 
-  async detectExistingNetwork(): Promise<{ found: boolean; processes: Array<{ pid: number; command: string; port?: string; status?: any }> }> {
+  async detectExistingNetwork(autoSync: boolean = false): Promise<{ found: boolean; processes: Array<{ pid: number; command: string; port?: string; status?: any }> }> {
     const { processes } = await this.checkExistingProcesses()
     
     if (processes.length === 0) {
@@ -208,8 +208,8 @@ export class SuiService extends EventEmitter {
 
     this.emit('log', { level: 'info', message: `検出されたSUIプロセス: ${processes.length}個` })
     
-    // 既存プロセスが見つかった場合、ネットワーク状態を更新
-    if (processesWithStatus.length > 0) {
+    // 既存プロセスが見つかった場合、autoSyncがtrueの時のみネットワーク状態を更新
+    if (processesWithStatus.length > 0 && autoSync) {
       await this.syncWithExistingNetwork(processesWithStatus)
     }
     
