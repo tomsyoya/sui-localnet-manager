@@ -8,6 +8,12 @@ const electronAPI = {
     stop: () => ipcRenderer.invoke('sui:stop'),
     getStatus: () => ipcRenderer.invoke('sui:getStatus'),
     checkInstallation: () => ipcRenderer.invoke('sui:checkInstallation'),
+    detectExistingNetwork: () => ipcRenderer.invoke('sui:detectExistingNetwork'),
+    getProcessStatus: (pid: number) => ipcRenderer.invoke('sui:getProcessStatus', pid),
+    killProcess: (pid: number) => ipcRenderer.invoke('sui:killProcess', pid),
+    killAllProcesses: () => ipcRenderer.invoke('sui:killAllProcesses'),
+    verifyNetworkConnection: (port?: string) => ipcRenderer.invoke('sui:verifyNetworkConnection', port),
+    syncWithExistingNetwork: () => ipcRenderer.invoke('sui:syncWithExistingNetwork'),
     
     // イベントリスナー
     onStatusChange: (callback: (status: any) => void) => {

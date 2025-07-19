@@ -13,6 +13,59 @@ export interface ElectronAPI {
       version: string
       path: string
     }>
+    detectExistingNetwork: () => Promise<{
+      found: boolean
+      processes: Array<{
+        pid: number
+        command: string
+        port?: string
+        status?: {
+          pid: number
+          ppid: number
+          state: string
+          cpu: number
+          memory: number
+          time: string
+          command: string
+        }
+      }>
+    }>
+    getProcessStatus: (pid: number) => Promise<{
+      running: boolean
+      details?: {
+        pid: number
+        ppid: number
+        state: string
+        cpu: number
+        memory: number
+        time: string
+        command: string
+      }
+    }>
+    killProcess: (pid: number) => Promise<{
+      success: boolean
+      message: string
+    }>
+    killAllProcesses: () => Promise<{
+      success: boolean
+      message: string
+      results: Array<{
+        pid: number
+        success: boolean
+        message: string
+      }>
+    }>
+    verifyNetworkConnection: (port?: string) => Promise<{
+      connected: boolean
+      rpcReady: boolean
+      clientReady: boolean
+      message: string
+      details?: any
+    }>
+    syncWithExistingNetwork: () => Promise<{
+      success: boolean
+      message: string
+    }>
   }
   
   config: {

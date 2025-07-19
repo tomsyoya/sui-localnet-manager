@@ -24,6 +24,10 @@ import {
   Refresh as RefreshIcon,
   ExpandLess as ExpandLessIcon,
   ExpandMore as ExpandMoreIcon,
+  Delete as DeleteIcon,
+  DeleteSweep as DeleteSweepIcon,
+  NetworkCheck as NetworkCheckIcon,
+  Sync as SyncIcon,
 } from '@mui/icons-material'
 
 interface NetworkStatus {
@@ -40,6 +44,21 @@ interface LogEntry {
   source?: string
 }
 
+interface ExistingProcess {
+  pid: number
+  command: string
+  port?: string
+  status?: {
+    pid: number
+    ppid: number
+    state: string
+    cpu: number
+    memory: number
+    time: string
+    command: string
+  }
+}
+
 const Dashboard: React.FC = () => {
   const [networkStatus, setNetworkStatus] = useState<NetworkStatus>({
     running: false,
@@ -52,6 +71,9 @@ const Dashboard: React.FC = () => {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [logExpanded, setLogExpanded] = useState(true)
   const [logLevel, setLogLevel] = useState<string>('all')
+  const [existingProcesses, setExistingProcesses] = useState<ExistingProcess[]>([])
+  const [processsExpanded, setProcessExpanded] = useState(false)
+  const [processMonitorInterval, setProcessMonitorInterval] = useState<NodeJS.Timeout | null>(null)
   const logListRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -78,6 +100,12 @@ const Dashboard: React.FC = () => {
 
       // 初期ログロード
       loadInitialLogs()
+      
+      // 既存プロセス検出
+      detectExistingProcesses()
+      
+      // プロセス監視の開始
+      startProcessMonitoring()
     }
 
     // クリーンアップ
@@ -85,6 +113,11 @@ const Dashboard: React.FC = () => {
       if (window.electronAPI) {
         window.electronAPI.sui.removeAllListeners()
         window.electronAPI.logs.removeAllListeners()
+      }
+      
+      // プロセス監視の停止
+      if (processMonitorInterval) {
+        clearInterval(processMonitorInterval)
       }
     }
   }, [])
@@ -108,6 +141,111 @@ const Dashboard: React.FC = () => {
       }
     } catch (error) {
       console.error('Failed to get status:', error)
+    }
+  }
+
+  const detectExistingProcesses = async () => {
+    try {
+      if (window.electronAPI) {
+        const result = await window.electronAPI.sui.detectExistingNetwork()
+        setExistingProcesses(result.processes || [])
+      }
+    } catch (error) {
+      console.error('Failed to detect existing processes:', error)
+    }
+  }
+
+  const startProcessMonitoring = () => {
+    // プロセス監視間隔を5秒に設定
+    const interval = setInterval(() => {
+      if (processsExpanded) {
+        detectExistingProcesses()
+      }
+    }, 5000)
+    
+    setProcessMonitorInterval(interval)
+  }
+
+
+  const handleKillProcess = async (pid: number) => {
+    try {
+      if (window.electronAPI) {
+        const result = await window.electronAPI.sui.killProcess(pid)
+        setMessage(result.message)
+        
+        if (result.success) {
+          // プロセス一覧を更新
+          detectExistingProcesses()
+        }
+      }
+    } catch (error) {
+      setMessage('プロセスの停止に失敗しました')
+    }
+  }
+
+  const handleKillAllProcesses = async () => {
+    setLoading(true)
+    setMessage(null)
+    try {
+      if (window.electronAPI) {
+        const result = await window.electronAPI.sui.killAllProcesses()
+        setMessage(result.message)
+        
+        if (result.success) {
+          // プロセス一覧を更新
+          detectExistingProcesses()
+        }
+      }
+    } catch (error) {
+      setMessage('プロセスの一括停止に失敗しました')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleVerifyConnection = async () => {
+    setLoading(true)
+    setMessage(null)
+    try {
+      if (window.electronAPI) {
+        const profiles = await window.electronAPI.config.getProfiles()
+        const activeProfile = profiles.find(p => p.active)
+        const port = activeProfile?.port || '9000'
+        
+        const result = await window.electronAPI.sui.verifyNetworkConnection(port)
+        setMessage(result.message)
+        
+        // 接続確認後に状態を更新
+        if (result.connected) {
+          await refreshStatus()
+        }
+      }
+    } catch (error) {
+      setMessage('ネットワーク接続確認に失敗しました')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSyncWithExisting = async () => {
+    setLoading(true)
+    setMessage(null)
+    try {
+      if (window.electronAPI) {
+        const result = await window.electronAPI.sui.syncWithExistingNetwork()
+        setMessage(result.message)
+        
+        // 同期成功後に状態を更新
+        if (result.success) {
+          await refreshStatus()
+          // プロセス一覧も更新
+          detectExistingProcesses()
+        }
+      }
+    } catch (error) {
+      setMessage('既存ネットワークとの同期に失敗しました')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -217,10 +355,31 @@ const Dashboard: React.FC = () => {
                 <Button
                   variant="outlined"
                   startIcon={<RefreshIcon />}
-                  onClick={refreshStatus}
+                  onClick={() => {
+                    refreshStatus()
+                    detectExistingProcesses()
+                  }}
                   disabled={loading}
                 >
                   状態更新
+                </Button>
+                <Button
+                  variant="outlined"
+                  color="info"
+                  startIcon={<NetworkCheckIcon />}
+                  onClick={handleVerifyConnection}
+                  disabled={loading}
+                >
+                  接続確認
+                </Button>
+                <Button
+                  variant="outlined"
+                  color="warning"
+                  startIcon={<SyncIcon />}
+                  onClick={handleSyncWithExisting}
+                  disabled={loading}
+                >
+                  既存と同期
                 </Button>
               </Box>
             </CardContent>
@@ -276,6 +435,121 @@ const Dashboard: React.FC = () => {
               <Typography variant="h3" color={networkStatus.running ? 'success.main' : 'text.secondary'}>
                 {networkStatus.running ? '正常' : '停止'}
               </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        {/* 既存プロセス状況 */}
+        <Grid item xs={12}>
+          <Card>
+            <CardContent>
+              <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+                <Typography variant="h6">
+                  既存のSUIプロセス
+                </Typography>
+                <Box display="flex" alignItems="center" gap={2}>
+                  <Chip
+                    label={`${existingProcesses.length}個のプロセス`}
+                    color={existingProcesses.length > 0 ? 'warning' : 'default'}
+                  />
+                  {existingProcesses.length > 0 && (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color="error"
+                      startIcon={<DeleteSweepIcon />}
+                      onClick={handleKillAllProcesses}
+                      disabled={loading}
+                    >
+                      すべて停止
+                    </Button>
+                  )}
+                  <Button
+                    size="small"
+                    onClick={() => setProcessExpanded(!processsExpanded)}
+                    endIcon={processsExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                  >
+                    {processsExpanded ? '折りたたみ' : '展開'}
+                  </Button>
+                </Box>
+              </Box>
+              
+              {processsExpanded && (
+                <Paper variant="outlined" sx={{ maxHeight: 300, overflow: 'hidden' }}>
+                  <Box sx={{ maxHeight: 300, overflowY: 'auto', backgroundColor: 'background.paper' }}>
+                    <List dense>
+                      {existingProcesses.length > 0 ? (
+                        existingProcesses.map((process, index) => (
+                          <ListItem 
+                            key={index} 
+                            divider={index < existingProcesses.length - 1}
+                            secondaryAction={
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                color="error"
+                                startIcon={<DeleteIcon />}
+                                onClick={() => handleKillProcess(process.pid)}
+                                disabled={loading}
+                              >
+                                停止
+                              </Button>
+                            }
+                          >
+                            <ListItemText
+                              primary={
+                                <Box display="flex" alignItems="center" gap={1} mb={0.5}>
+                                  <Chip
+                                    label={`PID: ${process.pid}`}
+                                    size="small"
+                                    color="primary"
+                                  />
+                                  {process.port && (
+                                    <Chip
+                                      label={`ポート: ${process.port}`}
+                                      size="small"
+                                      color="secondary"
+                                    />
+                                  )}
+                                  {process.status && (
+                                    <Chip
+                                      label={`状態: ${process.status.state}`}
+                                      size="small"
+                                      color={process.status.state === 'R' ? 'success' : 'default'}
+                                    />
+                                  )}
+                                </Box>
+                              }
+                              secondary={
+                                <Box sx={{ pr: 10 }}>
+                                  <Typography
+                                    variant="body2"
+                                    sx={{ fontFamily: 'monospace', fontSize: '0.875rem', wordBreak: 'break-all' }}
+                                  >
+                                    {process.command}
+                                  </Typography>
+                                  {process.status && (
+                                    <Typography variant="caption" color="text.secondary">
+                                      CPU: {process.status.cpu}% | メモリ: {process.status.memory}% | 実行時間: {process.status.time}
+                                    </Typography>
+                                  )}
+                                </Box>
+                              }
+                            />
+                          </ListItem>
+                        ))
+                      ) : (
+                        <ListItem>
+                          <ListItemText
+                            primary="既存のSUIプロセスはありません"
+                            secondary="現在実行中のSUIプロセスは検出されませんでした"
+                          />
+                        </ListItem>
+                      )}
+                    </List>
+                  </Box>
+                </Paper>
+              )}
             </CardContent>
           </Card>
         </Grid>

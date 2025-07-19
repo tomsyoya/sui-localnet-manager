@@ -18,6 +18,20 @@ export class IPCHandlers {
     this.configService = configService
     this.logService = logService
     this.setupHandlers()
+    this.loadInitialSettings()
+  }
+
+  private async loadInitialSettings(): Promise<void> {
+    try {
+      const settings = await this.configService.getSettings()
+      
+      // SUIパスの設定
+      if (settings.suiPath) {
+        this.suiService.setSuiPath(settings.suiPath)
+      }
+    } catch (error) {
+      this.logService.logApp('error', `Failed to load initial settings: ${error}`)
+    }
   }
 
   private setupHandlers(): void {
@@ -81,6 +95,93 @@ export class IPCHandlers {
           version: '',
           path: '',
         }
+      }
+    })
+
+    ipcMain.handle('sui:detectExistingNetwork', async () => {
+      try {
+        const result = await this.suiService.detectExistingNetwork()
+        this.logService.logApp('info', `Existing network detection: ${result.found ? 'found' : 'not found'}`)
+        return result
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        this.logService.logApp('error', `Existing network detection error: ${errorMessage}`)
+        return { found: false, processes: [] }
+      }
+    })
+
+    ipcMain.handle('sui:getProcessStatus', async (_, pid) => {
+      try {
+        return await this.suiService.getProcessStatus(pid)
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        this.logService.logApp('error', `Process status check error: ${errorMessage}`)
+        return { running: false }
+      }
+    })
+
+    ipcMain.handle('sui:killProcess', async (_, pid) => {
+      try {
+        const result = await this.suiService.killProcess(pid)
+        if (result.success) {
+          this.logService.logApp('info', `Process ${pid} terminated successfully`)
+        } else {
+          this.logService.logApp('error', `Failed to terminate process ${pid}: ${result.message}`)
+        }
+        return result
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        this.logService.logApp('error', `Process termination error: ${errorMessage}`)
+        return { success: false, message: errorMessage }
+      }
+    })
+
+    ipcMain.handle('sui:killAllProcesses', async () => {
+      try {
+        const result = await this.suiService.killAllExistingProcesses()
+        if (result.success) {
+          this.logService.logApp('info', `All processes terminated: ${result.message}`)
+        } else {
+          this.logService.logApp('error', `Failed to terminate all processes: ${result.message}`)
+        }
+        return result
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        this.logService.logApp('error', `Bulk termination error: ${errorMessage}`)
+        return { success: false, message: errorMessage, results: [] }
+      }
+    })
+
+    ipcMain.handle('sui:verifyNetworkConnection', async (_, port) => {
+      try {
+        const result = await this.suiService.verifyNetworkConnection(port)
+        this.logService.logApp('info', `Network verification: ${result.message}`)
+        return result
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        this.logService.logApp('error', `Network verification error: ${errorMessage}`)
+        return {
+          connected: false,
+          rpcReady: false,
+          clientReady: false,
+          message: errorMessage
+        }
+      }
+    })
+
+    ipcMain.handle('sui:syncWithExistingNetwork', async () => {
+      try {
+        const result = await this.suiService.syncWithExistingNetworkManually()
+        if (result.success) {
+          this.logService.logApp('info', `Network sync success: ${result.message}`)
+        } else {
+          this.logService.logApp('warn', `Network sync failed: ${result.message}`)
+        }
+        return result
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        this.logService.logApp('error', `Network sync error: ${errorMessage}`)
+        return { success: false, message: errorMessage }
       }
     })
 
