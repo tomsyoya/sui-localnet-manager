@@ -159,22 +159,15 @@ export class SuiService extends EventEmitter {
         
         psProcess.on('close', (code) => {
           if (code === 0 && output.trim()) {
-            const lines = output.split('\n')
-            if (lines.length > 1) {
-              const processInfo = lines[1].trim().split(/\s+/)
-              resolve({
-                running: true,
-                details: {
-                  pid: parseInt(processInfo[0]),
-                  ppid: parseInt(processInfo[1]),
-                  state: processInfo[2],
-                  cpu: parseFloat(processInfo[3]),
-                  memory: parseFloat(processInfo[4]),
-                  time: processInfo[5],
-                  command: processInfo.slice(6).join(' ')
-                }
-              })
-            } else {
+            try {
+              const result = this.parseProcessOutput(output)
+              if (result) {
+                resolve({ running: true, details: result })
+              } else {
+                resolve({ running: false })
+              }
+            } catch (parseError) {
+              this.emit('log', { level: 'error', message: `プロセス出力解析エラー: ${parseError instanceof Error ? parseError.message : 'Unknown error'}` })
               resolve({ running: false })
             }
           } else {
@@ -190,6 +183,95 @@ export class SuiService extends EventEmitter {
       this.emit('log', { level: 'error', message: `プロセス状態取得エラー: ${error instanceof Error ? error.message : 'Unknown error'}` })
       return { running: false }
     }
+  }
+
+  private parseProcessOutput(output: string): any | null {
+    const lines = output.split('\n').filter(line => line.trim())
+    
+    if (lines.length < 2) {
+      return null
+    }
+
+    const headerLine = lines[0].trim()
+    const dataLine = lines[1].trim()
+
+    // Parse header to get column positions and names
+    const columns = this.parseHeaderColumns(headerLine)
+    
+    if (columns.length === 0) {
+      throw new Error('Unable to parse ps header columns')
+    }
+
+    // Parse data line using column positions
+    const values = this.parseDataLine(dataLine, columns)
+    
+    // Map values to expected structure
+    return {
+      pid: this.parseIntValue(values.PID),
+      ppid: this.parseIntValue(values.PPID),
+      state: values.STAT || values.STATE || 'Unknown',
+      cpu: this.parseFloatValue(values['%CPU'] || values.PCPU),
+      memory: this.parseFloatValue(values['%MEM'] || values.PMEM),
+      time: values.TIME || 'Unknown',
+      command: values.COMMAND || values.CMD || 'Unknown'
+    }
+  }
+
+  private parseHeaderColumns(headerLine: string): Array<{ name: string; start: number; end: number }> {
+    const columns: Array<{ name: string; start: number; end: number }> = []
+    const headerParts = headerLine.split(/\s+/)
+    let currentPos = 0
+
+    for (let i = 0; i < headerParts.length; i++) {
+      const columnName = headerParts[i]
+      const start = headerLine.indexOf(columnName, currentPos)
+      
+      // For all columns except the last one, find the end by looking for the next column
+      let end: number
+      if (i < headerParts.length - 1) {
+        const nextColumn = headerParts[i + 1]
+        const nextStart = headerLine.indexOf(nextColumn, start + columnName.length)
+        end = nextStart
+      } else {
+        // Last column extends to the end
+        end = -1
+      }
+
+      columns.push({ name: columnName, start, end })
+      currentPos = start + columnName.length
+    }
+
+    return columns
+  }
+
+  private parseDataLine(dataLine: string, columns: Array<{ name: string; start: number; end: number }>): Record<string, string> {
+    const values: Record<string, string> = {}
+
+    for (const column of columns) {
+      let value: string
+      if (column.end === -1) {
+        // Last column - take everything from start to end
+        value = dataLine.substring(column.start).trim()
+      } else {
+        // Extract value using start and end positions
+        value = dataLine.substring(column.start, column.end).trim()
+      }
+      values[column.name] = value
+    }
+
+    return values
+  }
+
+  private parseIntValue(value: string | undefined): number {
+    if (!value || value === 'Unknown') return 0
+    const parsed = parseInt(value)
+    return isNaN(parsed) ? 0 : parsed
+  }
+
+  private parseFloatValue(value: string | undefined): number {
+    if (!value || value === 'Unknown') return 0.0
+    const parsed = parseFloat(value)
+    return isNaN(parsed) ? 0.0 : parsed
   }
 
   async detectExistingNetwork(autoSync: boolean = false): Promise<{ found: boolean; processes: Array<{ pid: number; command: string; port?: string; status?: any }> }> {
