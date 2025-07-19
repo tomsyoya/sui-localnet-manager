@@ -72,7 +72,7 @@ const Dashboard: React.FC = () => {
   const [logExpanded, setLogExpanded] = useState(true)
   const [logLevel, setLogLevel] = useState<string>('all')
   const [existingProcesses, setExistingProcesses] = useState<ExistingProcess[]>([])
-  const [processsExpanded, setProcessExpanded] = useState(false)
+  const [processExpanded, setProcessExpanded] = useState(false)
   const [processMonitorInterval, setProcessMonitorInterval] = useState<NodeJS.Timeout | null>(null)
   const logListRef = useRef<HTMLDivElement>(null)
 
@@ -158,7 +158,7 @@ const Dashboard: React.FC = () => {
   const startProcessMonitoring = () => {
     // プロセス監視間隔を5秒に設定
     const interval = setInterval(() => {
-      if (processsExpanded) {
+      if (processExpanded) {
         detectExistingProcesses()
       }
     }, 5000)
@@ -466,15 +466,15 @@ const Dashboard: React.FC = () => {
                   )}
                   <Button
                     size="small"
-                    onClick={() => setProcessExpanded(!processsExpanded)}
-                    endIcon={processsExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                    onClick={() => setProcessExpanded(!processExpanded)}
+                    endIcon={processExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
                   >
-                    {processsExpanded ? '折りたたみ' : '展開'}
+                    {processExpanded ? '折りたたみ' : '展開'}
                   </Button>
                 </Box>
               </Box>
               
-              {processsExpanded && (
+              {processExpanded && (
                 <Paper variant="outlined" sx={{ maxHeight: 300, overflow: 'hidden' }}>
                   <Box sx={{ maxHeight: 300, overflowY: 'auto', backgroundColor: 'background.paper' }}>
                     <List dense>
