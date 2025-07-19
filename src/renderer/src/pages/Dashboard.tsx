@@ -73,60 +73,52 @@ const Dashboard: React.FC = () => {
   const [logLevel, setLogLevel] = useState<string>('all')
   const [existingProcesses, setExistingProcesses] = useState<ExistingProcess[]>([])
   const [processExpanded, setProcessExpanded] = useState(false)
-  const [processMonitorInterval, setProcessMonitorInterval] = useState<NodeJS.Timeout | null>(null)
+  const processMonitorIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const logListRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     // 初期状態の取得
     refreshStatus()
 
-    // リアルタイム更新のためのイベントリスナー設定
-    if (window.electronAPI) {
-      window.electronAPI.sui.onStatusChange((status) => {
-        setNetworkStatus(status)
-      })
+    // 初期ログロード
+    loadInitialLogs()
+    
+    // 既存プロセス検出
+    detectExistingProcesses()
+    
+    // プロセス監視の開始
+    startProcessMonitoring()
 
-      // リアルタイムログ更新
-      window.electronAPI.logs.onNewLog((newLog) => {
-        setLogs(prev => [newLog, ...prev].slice(0, 100)) // 最新100件を保持
-        
-        // 自動スクロール（新しいログが追加されたとき）
-        setTimeout(() => {
-          if (logListRef.current) {
-            logListRef.current.scrollTop = 0
-          }
-        }, 100)
-      })
-
-      // 初期ログロード
-      loadInitialLogs()
-      
-      // 既存プロセス検出
-      detectExistingProcesses()
-      
-      // プロセス監視の開始
-      startProcessMonitoring()
-    }
+    // 定期的な状態更新（5秒間隔）
+    const statusInterval = setInterval(() => {
+      refreshStatus()
+    }, 5000)
 
     // クリーンアップ
     return () => {
-      if (window.electronAPI) {
-        window.electronAPI.sui.removeAllListeners()
-        window.electronAPI.logs.removeAllListeners()
+      // プロセス監視の停止
+      if (processMonitorIntervalRef.current) {
+        clearInterval(processMonitorIntervalRef.current)
       }
       
-      // プロセス監視の停止
-      if (processMonitorInterval) {
-        clearInterval(processMonitorInterval)
-      }
+      // 状態更新の停止
+      clearInterval(statusInterval)
     }
   }, [])
 
   const loadInitialLogs = async () => {
     try {
       if (window.electronAPI) {
-        const logEntries = await window.electronAPI.logs.getLogs({ limit: 50 })
-        setLogs(logEntries)
+        const logEntries = await window.electronAPI.logs.getLogs()
+        // 型変換と最新50件の制限
+        const convertedLogs: LogEntry[] = logEntries
+          .slice(0, 50)
+          .map(log => ({
+            timestamp: log.timestamp,
+            level: log.level as 'info' | 'warn' | 'error' | 'debug',
+            message: log.message
+          }))
+        setLogs(convertedLogs)
       }
     } catch (error) {
       console.error('Failed to load initial logs:', error)
@@ -163,7 +155,7 @@ const Dashboard: React.FC = () => {
       }
     }, 5000)
     
-    setProcessMonitorInterval(interval)
+    processMonitorIntervalRef.current = interval
   }
 
 
@@ -208,11 +200,7 @@ const Dashboard: React.FC = () => {
     setMessage(null)
     try {
       if (window.electronAPI) {
-        const profiles = await window.electronAPI.config.getProfiles()
-        const activeProfile = profiles.find(p => p.active)
-        const port = activeProfile?.port || '9000'
-        
-        const result = await window.electronAPI.sui.verifyNetworkConnection(port)
+        const result = await window.electronAPI.sui.verifyNetworkConnection()
         setMessage(result.message)
         
         // 接続確認後に状態を更新
