@@ -741,7 +741,10 @@ export class SuiService extends EventEmitter {
     }
   }
 
-  async startNetwork(config: { port?: string; nodeCount?: string }): Promise<{ success: boolean; message: string }> {
+  async startNetwork(
+    config: { port?: string; nodeCount?: string }, 
+    options: { throwOnExistingProcesses?: boolean } = {}
+  ): Promise<{ success: boolean; message: string }> {
     if (this.suiProcess) {
       return { success: false, message: 'SUI ネットワークは既に実行中です' }
     }
@@ -749,7 +752,14 @@ export class SuiService extends EventEmitter {
     // 既存のSUIプロセスをチェック
     const existing = await this.detectExistingNetwork()
     if (existing.found) {
-      this.emit('log', { level: 'warn', message: `既存のSUIプロセスが検出されました: ${existing.processes.length}個` })
+      const processMessage = `既存のSUIプロセスが検出されました: ${existing.processes.length}個`
+      
+      if (options.throwOnExistingProcesses) {
+        this.emit('log', { level: 'error', message: processMessage })
+        throw new Error(`Port conflict risk: ${processMessage}. Existing processes must be stopped before starting a new network.`)
+      } else {
+        this.emit('log', { level: 'warn', message: processMessage })
+      }
     }
 
     await this.killExistingSuiProcesses()
