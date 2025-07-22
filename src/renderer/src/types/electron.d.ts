@@ -8,11 +8,73 @@ export interface ElectronAPI {
       blockHeight: number
       transactions: number
     }>
+    updateNetworkStatus: (port?: string) => Promise<{
+      success: boolean
+      message?: string
+    }>
     checkInstallation: () => Promise<{
       installed: boolean
       version: string
       path: string
     }>
+    detectExistingNetwork: () => Promise<{
+      found: boolean
+      processes: Array<{
+        pid: number
+        command: string
+        port?: string
+        status?: {
+          pid: number
+          ppid: number
+          state: string
+          cpu: number
+          memory: number
+          time: string
+          command: string
+        }
+      }>
+    }>
+    getProcessStatus: (pid: number) => Promise<{
+      running: boolean
+      details?: {
+        pid: number
+        ppid: number
+        state: string
+        cpu: number
+        memory: number
+        time: string
+        command: string
+      }
+    }>
+    killProcess: (pid: number) => Promise<{
+      success: boolean
+      message: string
+    }>
+    killAllProcesses: () => Promise<{
+      success: boolean
+      message: string
+      results: Array<{
+        pid: number
+        success: boolean
+        message: string
+      }>
+    }>
+    verifyNetworkConnection: (port?: string) => Promise<{
+      connected: boolean
+      rpcReady: boolean
+      clientReady: boolean
+      message: string
+      details?: any
+    }>
+    syncWithExistingNetwork: () => Promise<{
+      success: boolean
+      message: string
+    }>
+    
+    // イベントリスナー
+    onStatusChange: (callback: (status: any) => void) => void
+    onLog: (callback: (log: any) => void) => void
+    removeAllListeners: () => void
   }
   
   config: {
@@ -26,12 +88,18 @@ export interface ElectronAPI {
   }
 
   logs: {
-    getLogs: () => Promise<Array<{
+    getLogs: (filter?: any) => Promise<Array<{
       timestamp: string
       level: string
       message: string
     }>>
-    exportLogs: () => Promise<{ success: boolean; path?: string }>
+    exportLogs: (filePath?: string) => Promise<{ success: boolean; path?: string }>
+    clearLogs: () => Promise<{ success: boolean }>
+    
+    // イベントリスナー
+    onNewLog: (callback: (log: any) => void) => void
+    onLogsCleared: (callback: () => void) => void
+    removeAllListeners: () => void
   }
 
   system: {
