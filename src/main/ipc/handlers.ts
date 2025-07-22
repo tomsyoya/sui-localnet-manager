@@ -96,6 +96,17 @@ export class IPCHandlers {
       return this.suiService.getStatus()
     })
 
+    ipcMain.handle('sui:updateNetworkStatus', async (_, port) => {
+      try {
+        await this.suiService.updateNetworkStatus(port || '9000')
+        return { success: true }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        this.logService.logApp('error', `Network status update error: ${errorMessage}`)
+        return { success: false, message: errorMessage }
+      }
+    })
+
     ipcMain.handle('sui:checkInstallation', async () => {
       try {
         this.ensureReady()

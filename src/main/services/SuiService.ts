@@ -33,17 +33,22 @@ export class SuiService extends EventEmitter {
   }
 
   async checkInstallation(): Promise<SuiInstallation> {
+    this.emit('log', { level: 'info', message: 'SUIインストール確認開始' })
+    
     // 設定されたパスを最初に確認
     if (this.suiPath) {
+      this.emit('log', { level: 'info', message: `設定済みパスを確認中: ${this.suiPath}` })
       try {
         await fs.access(this.suiPath)
         const version = await this.getSuiVersion(this.suiPath)
+        this.emit('log', { level: 'info', message: `SUI確認完了 - パス: ${this.suiPath}, バージョン: ${version}` })
         return {
           installed: true,
           version,
           path: this.suiPath,
         }
       } catch (error) {
+        this.emit('log', { level: 'warn', message: `設定パスでSUI実行ファイルが見つかりません: ${this.suiPath}` })
         // 設定されたパスが無効な場合は自動検出に進む
       }
     }
@@ -55,21 +60,28 @@ export class SuiService extends EventEmitter {
       path.join(process.env.HOME || '', '.cargo/bin/sui'),
     ]
 
+    this.emit('log', { level: 'info', message: '一般的なパスでSUIを検索中...' })
+    
     for (const suiPath of possiblePaths) {
+      this.emit('log', { level: 'info', message: `パス確認中: ${suiPath}` })
       try {
         await fs.access(suiPath)
         const version = await this.getSuiVersion(suiPath)
         this.suiPath = suiPath
+        this.emit('log', { level: 'info', message: `SUI検出成功 - パス: ${suiPath}, バージョン: ${version}` })
         return {
           installed: true,
           version,
           path: suiPath,
         }
       } catch (error) {
+        this.emit('log', { level: 'info', message: `パス無効: ${suiPath}` })
         // パスが存在しない場合は次を試す
         continue
       }
     }
+
+    this.emit('log', { level: 'error', message: 'SUIインストールが見つかりません' })
 
     return {
       installed: false,
@@ -104,15 +116,22 @@ export class SuiService extends EventEmitter {
   }
 
   async checkExistingProcesses(): Promise<{ processes: Array<{ pid: number; command: string; port?: string }> }> {
+    this.emit('log', { level: 'info', message: '既存SUIプロセス検索開始' })
+    
     try {
       // Try platform-specific approach first (pgrep for Unix-like systems)
+      this.emit('log', { level: 'info', message: 'pgrep方式でプロセス検索中...' })
       const processes = await this.findProcessesWithPgrep()
       if (processes.length > 0) {
+        this.emit('log', { level: 'info', message: `pgrep方式で${processes.length}個のSUIプロセスを検出` })
         return { processes }
       }
       
       // Fallback to regex-based ps parsing if pgrep fails
-      return await this.findProcessesWithPs()
+      this.emit('log', { level: 'info', message: 'pgrep方式で検出されず、ps方式にフォールバック' })
+      const psResult = await this.findProcessesWithPs()
+      this.emit('log', { level: 'info', message: `ps方式で${psResult.processes.length}個のSUIプロセスを検出` })
+      return psResult
     } catch (error) {
       this.emit('log', { level: 'error', message: `プロセス検出エラー: ${error instanceof Error ? error.message : 'Unknown error'}` })
       return { processes: [] }
@@ -141,7 +160,7 @@ export class SuiService extends EventEmitter {
       
       return allProcesses
     } catch (error) {
-      this.emit('log', { level: 'debug', message: `pgrep方式でのプロセス検出に失敗: ${error instanceof Error ? error.message : 'Unknown error'}` })
+      this.emit('log', { level: 'info', message: `pgrep方式でのプロセス検出に失敗: ${error instanceof Error ? error.message : 'Unknown error'}` })
       return []
     }
   }
@@ -258,6 +277,8 @@ export class SuiService extends EventEmitter {
   }
 
   async getProcessStatus(pid: number): Promise<{ running: boolean; details?: any }> {
+    this.emit('log', { level: 'info', message: `PID ${pid}の状態を確認中...` })
+    
     try {
       const { spawn } = await import('child_process')
       
@@ -271,28 +292,33 @@ export class SuiService extends EventEmitter {
         
         psProcess.on('close', (code) => {
           if (code === 0 && output.trim()) {
+            this.emit('log', { level: 'info', message: `PID ${pid}: プロセス実行中` })
             try {
               const result = this.parseProcessOutput(output)
               if (result) {
+                this.emit('log', { level: 'info', message: `PID ${pid}: 詳細情報解析完了 (状態: ${result.state})` })
                 resolve({ running: true, details: result })
               } else {
+                this.emit('log', { level: 'warn', message: `PID ${pid}: 詳細情報解析失敗` })
                 resolve({ running: false })
               }
             } catch (parseError) {
-              this.emit('log', { level: 'error', message: `プロセス出力解析エラー: ${parseError instanceof Error ? parseError.message : 'Unknown error'}` })
+              this.emit('log', { level: 'error', message: `PID ${pid} プロセス出力解析エラー: ${parseError instanceof Error ? parseError.message : 'Unknown error'}` })
               resolve({ running: false })
             }
           } else {
+            this.emit('log', { level: 'info', message: `PID ${pid}: プロセス停止中` })
             resolve({ running: false })
           }
         })
         
-        psProcess.on('error', () => {
+        psProcess.on('error', (error) => {
+          this.emit('log', { level: 'error', message: `PID ${pid} psコマンドエラー: ${error.message}` })
           resolve({ running: false })
         })
       })
     } catch (error) {
-      this.emit('log', { level: 'error', message: `プロセス状態取得エラー: ${error instanceof Error ? error.message : 'Unknown error'}` })
+      this.emit('log', { level: 'error', message: `PID ${pid} プロセス状態取得エラー: ${error instanceof Error ? error.message : 'Unknown error'}` })
       return { running: false }
     }
   }
@@ -387,14 +413,20 @@ export class SuiService extends EventEmitter {
   }
 
   async detectExistingNetwork(autoSync: boolean = false): Promise<{ found: boolean; processes: Array<{ pid: number; command: string; port?: string; status?: any }> }> {
+    this.emit('log', { level: 'info', message: `既存ネットワーク検出開始 (autoSync: ${autoSync})` })
+    
     const { processes } = await this.checkExistingProcesses()
     
     if (processes.length === 0) {
+      this.emit('log', { level: 'info', message: '既存SUIプロセスは見つかりませんでした' })
       return { found: false, processes: [] }
     }
 
+    this.emit('log', { level: 'info', message: `${processes.length}個のSUIプロセスを検出、詳細情報を取得中...` })
+    
     const processesWithStatus = await Promise.all(
       processes.map(async (process) => {
+        this.emit('log', { level: 'info', message: `PID ${process.pid}の詳細情報を取得中...` })
         const status = await this.getProcessStatus(process.pid)
         return { ...process, status: status.details }
       })
@@ -404,7 +436,10 @@ export class SuiService extends EventEmitter {
     
     // 既存プロセスが見つかった場合、autoSyncがtrueの時のみネットワーク状態を更新
     if (processesWithStatus.length > 0 && autoSync) {
+      this.emit('log', { level: 'info', message: '自動同期を実行中...' })
       await this.syncWithExistingNetwork(processesWithStatus)
+    } else if (processesWithStatus.length > 0) {
+      this.emit('log', { level: 'info', message: '既存プロセス検出済み（自動同期は無効）' })
     }
     
     return { found: true, processes: processesWithStatus }
@@ -488,10 +523,14 @@ export class SuiService extends EventEmitter {
     }
   }
 
-  async updateNetworkStatus(port: string = '9000'): Promise<void> {
+  public async updateNetworkStatus(port: string = '9000'): Promise<void> {
     try {
+      this.emit('log', { level: 'info', message: `updateNetworkStatus呼び出し (ポート:${port})` })
+      
       // RPC経由でネットワーク情報を取得
       const networkInfo = await this.getNetworkInfo(port)
+      
+      this.emit('log', { level: 'info', message: `getNetworkInfo結果: ${JSON.stringify(networkInfo)}` })
       
       if (networkInfo.success) {
         // 現在の状態を更新
@@ -503,9 +542,13 @@ export class SuiService extends EventEmitter {
           pid: this.suiProcess?.pid || this.currentStatus.pid,
         }
         
+        this.emit('log', { level: 'info', message: `更新後のcurrentStatus: ${JSON.stringify(this.currentStatus)}` })
+        
         // 状態変更を通知
         this.emit('status-change', this.currentStatus)
         this.emit('log', { level: 'info', message: 'ネットワーク状態を更新しました' })
+      } else {
+        this.emit('log', { level: 'warn', message: 'ネットワーク情報の取得に失敗しました' })
       }
     } catch (error) {
       this.emit('log', { level: 'warn', message: `ネットワーク状態更新エラー: ${error instanceof Error ? error.message : 'Unknown error'}` })
@@ -521,7 +564,7 @@ export class SuiService extends EventEmitter {
         const curlProcess = spawn('curl', [
           '-X', 'POST',
           '-H', 'Content-Type: application/json',
-          '-d', '{"jsonrpc":"2.0","method":"sui_getLatestSuiSystemState","params":[],"id":1}',
+          '-d', '{"jsonrpc":"2.0","method":"suix_getLatestSuiSystemState","params":[],"id":1}',
           `http://localhost:${port}`,
           '--connect-timeout', '3',
           '--max-time', '10',
@@ -534,10 +577,12 @@ export class SuiService extends EventEmitter {
           output += data.toString()
         })
         
+        console.log('curlProcess cloase start', output);
         curlProcess.on('close', (code) => {
           if (code === 0 && output.includes('jsonrpc')) {
             try {
               const response = JSON.parse(output)
+              console.log('curlProcess response.result', response.result);
               if (response.result) {
                 // SUIシステム状態から情報を抽出
                 const systemState = response.result
@@ -630,46 +675,57 @@ export class SuiService extends EventEmitter {
   }
 
   async killProcess(pid: number): Promise<{ success: boolean; message: string }> {
+    this.emit('log', { level: 'info', message: `PID ${pid}の停止を開始...` })
+    
     try {
       const { spawn } = await import('child_process')
       
       // プロセスが存在するかチェック
+      this.emit('log', { level: 'info', message: `PID ${pid}の実行状態を確認中...` })
       const processStatus = await this.getProcessStatus(pid)
       if (!processStatus.running) {
+        this.emit('log', { level: 'warn', message: `PID ${pid}は既に停止済みです` })
         return { success: false, message: `プロセス ${pid} は既に停止しています` }
       }
 
+      this.emit('log', { level: 'info', message: `PID ${pid}にSIGTERMシグナルを送信中...` })
+      
       return new Promise((resolve) => {
         // まずSIGTERMで穏やかに停止を試みる
         const killProcess = spawn('kill', ['-TERM', pid.toString()], { stdio: 'pipe' })
         
         killProcess.on('close', (code) => {
+          this.emit('log', { level: 'info', message: `PID ${pid} kill-TERMコマンド終了コード: ${code}` })
+          
           if (code === 0) {
+            this.emit('log', { level: 'info', message: `PID ${pid}停止確認のため2秒待機中...` })
             // 停止確認のため2秒待つ
             setTimeout(async () => {
               const status = await this.getProcessStatus(pid)
               if (!status.running) {
-                this.emit('log', { level: 'info', message: `プロセス ${pid} を正常に停止しました` })
+                this.emit('log', { level: 'info', message: `PID ${pid}を正常に停止しました` })
                 resolve({ success: true, message: `プロセス ${pid} を正常に停止しました` })
               } else {
+                this.emit('log', { level: 'warn', message: `PID ${pid}はSIGTERMで停止できませんでした。強制停止を実行します` })
                 // SIGTERMで停止できない場合はSIGKILLを使用
                 this.forceKillProcess(pid).then(resolve)
               }
             }, 2000)
           } else {
+            this.emit('log', { level: 'error', message: `PID ${pid} kill-TERMコマンドが失敗しました (exit code: ${code})` })
             // killコマンドが失敗した場合
             resolve({ success: false, message: `プロセス ${pid} の停止に失敗しました (exit code: ${code})` })
           }
         })
         
         killProcess.on('error', (error) => {
-          this.emit('log', { level: 'error', message: `プロセス停止エラー: ${error.message}` })
+          this.emit('log', { level: 'error', message: `PID ${pid} killコマンドエラー: ${error.message}` })
           resolve({ success: false, message: `プロセス停止エラー: ${error.message}` })
         })
       })
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      this.emit('log', { level: 'error', message: `プロセス停止エラー: ${errorMessage}` })
+      this.emit('log', { level: 'error', message: `PID ${pid} プロセス停止エラー: ${errorMessage}` })
       return { success: false, message: `プロセス停止エラー: ${errorMessage}` }
     }
   }
@@ -745,11 +801,15 @@ export class SuiService extends EventEmitter {
     config: { port?: string; nodeCount?: string }, 
     options: { throwOnExistingProcesses?: boolean } = {}
   ): Promise<{ success: boolean; message: string }> {
+    this.emit('log', { level: 'info', message: 'SUIネットワーク起動処理を開始...' })
+    
     if (this.suiProcess) {
+      this.emit('log', { level: 'warn', message: 'SUIプロセスは既に実行中です' })
       return { success: false, message: 'SUI ネットワークは既に実行中です' }
     }
 
     // 既存のSUIプロセスをチェック
+    this.emit('log', { level: 'info', message: '既存SUIプロセスの確認中...' })
     const existing = await this.detectExistingNetwork()
     if (existing.found) {
       const processMessage = `既存のSUIプロセスが検出されました: ${existing.processes.length}個`
@@ -760,17 +820,23 @@ export class SuiService extends EventEmitter {
       } else {
         this.emit('log', { level: 'warn', message: processMessage })
       }
+    } else {
+      this.emit('log', { level: 'info', message: '既存SUIプロセスは検出されませんでした' })
     }
 
+    this.emit('log', { level: 'info', message: '既存SUIプロセスのクリーンアップ中...' })
     await this.killExistingSuiProcesses()
 
     // SUIインストール確認
+    this.emit('log', { level: 'info', message: 'SUIインストール状況を確認中...' })
     const installation = await this.checkInstallation()
     if (!installation.installed) {
+      this.emit('log', { level: 'error', message: 'SUIがインストールされていません' })
       return { success: false, message: 'SUI がインストールされていません。設定画面でSUIパスを確認してください。' }
     }
 
     this.suiPath = installation.path
+    this.emit('log', { level: 'info', message: `SUI実行ファイル確認完了: ${this.suiPath}` })
 
     try {
       // SUI local network を起動
@@ -778,18 +844,21 @@ export class SuiService extends EventEmitter {
       
       if (config.port) {
         args.push('--fullnode-rpc-port', config.port)
+        this.emit('log', { level: 'info', message: `カスタムRPCポート指定: ${config.port}` })
       }
 
-      this.emit('log', { level: 'info', message: `SUIを起動中: ${this.suiPath} ${args.join(' ')}` })
+      this.emit('log', { level: 'info', message: `SUIプロセス起動コマンド: ${this.suiPath} ${args.join(' ')}` })
 
       this.suiProcess = spawn(this.suiPath, args, {
         stdio: 'pipe',
         env: { ...process.env },
       })
 
+      this.emit('log', { level: 'info', message: `SUIプロセス起動完了 (PID: ${this.suiProcess.pid})` })
       this.setupProcessHandlers()
 
       // プロセス起動の確認を待つ
+      this.emit('log', { level: 'info', message: 'ネットワーク起動完了を待機中...' })
       await this.waitForNetworkStart(config)
 
       this.currentStatus = {
@@ -800,6 +869,7 @@ export class SuiService extends EventEmitter {
         pid: this.suiProcess.pid,
       }
 
+      this.emit('log', { level: 'info', message: `SUIネットワーク起動完了 (PID: ${this.suiProcess.pid}, ノード数: ${this.currentStatus.nodeCount})` })
       this.emit('status-change', this.currentStatus)
       return { success: true, message: 'SUI ネットワークが正常に起動しました' }
 
@@ -836,10 +906,16 @@ export class SuiService extends EventEmitter {
   }
 
   async stopNetwork(): Promise<{ success: boolean; message: string }> {
+    this.emit('log', { level: 'info', message: 'SUIネットワーク停止処理を開始...' })
+    
     if (!this.suiProcess) {
+      this.emit('log', { level: 'warn', message: 'SUIプロセスは実行されていません' })
       return { success: false, message: 'SUI ネットワークは実行されていません' }
     }
 
+    const processId = this.suiProcess.pid
+    this.emit('log', { level: 'info', message: `PID ${processId}にSIGTERMシグナルを送信中...` })
+    
     try {
       // プロセスを安全に終了
       this.suiProcess.kill('SIGTERM')
@@ -847,10 +923,15 @@ export class SuiService extends EventEmitter {
       // プロセス終了を待つ
       await new Promise<void>((resolve) => {
         if (this.suiProcess) {
-          this.suiProcess.on('exit', () => resolve())
+          this.suiProcess.on('exit', (code, signal) => {
+            this.emit('log', { level: 'info', message: `SUIプロセス正常終了 (PID: ${processId}, code: ${code}, signal: ${signal})` })
+            resolve()
+          })
+          
           // タイムアウト後は強制終了
           setTimeout(() => {
             if (this.suiProcess && !this.suiProcess.killed) {
+              this.emit('log', { level: 'warn', message: `PID ${processId}のタイムアウト、強制終了実行中...` })
               this.suiProcess.kill('SIGKILL')
             }
             resolve()
@@ -869,13 +950,16 @@ export class SuiService extends EventEmitter {
       }
 
       // 状態更新を停止
+      this.emit('log', { level: 'info', message: '定期状態更新を停止中...' })
       this.stopStatusUpdates()
 
+      this.emit('log', { level: 'info', message: 'SUIネットワーク停止完了' })
       this.emit('status-change', this.currentStatus)
       return { success: true, message: 'SUI ネットワークが正常に停止しました' }
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      this.emit('log', { level: 'error', message: `SUI停止エラー: ${errorMessage}` })
       return { success: false, message: `SUI ネットワークの停止に失敗しました: ${errorMessage}` }
     }
   }
@@ -935,11 +1019,14 @@ export class SuiService extends EventEmitter {
   }
 
   private async checkNetworkStatus(): Promise<{ ready: boolean; error?: string }> {
+    this.emit('log', { level: 'info', message: 'SUIクライアント接続確認開始' })
+    
     try {
       const { spawn } = await import('child_process')
       
       return new Promise((resolve) => {
         // sui client active-address コマンドでネットワークの状態を確認
+        this.emit('log', { level: 'info', message: `SUIクライアントコマンド実行: ${this.suiPath} client active-address` })
         const checkProcess = spawn(this.suiPath, ['client', 'active-address'], { 
           stdio: 'pipe',
           timeout: 5000 // 5秒でタイムアウト
@@ -958,41 +1045,47 @@ export class SuiService extends EventEmitter {
         
         checkProcess.on('close', (code) => {
           if (code === 0) {
-            // 成功 - ネットワークが利用可能
+            this.emit('log', { level: 'info', message: 'SUIクライアント接続成功' })
             resolve({ ready: true })
           } else {
-            // エラー - ネットワークがまだ利用できない
+            this.emit('log', { level: 'info', message: `SUIクライアント接続失敗 (code: ${code}, error: ${errorOutput})` })
             resolve({ ready: false, error: errorOutput })
           }
         })
         
         checkProcess.on('error', (error) => {
+          this.emit('log', { level: 'info', message: `SUIクライアントコマンドエラー: ${error.message}` })
           resolve({ ready: false, error: error.message })
         })
         
         // タイムアウト処理
         setTimeout(() => {
           if (!checkProcess.killed) {
+            this.emit('log', { level: 'info', message: 'SUIクライアントコマンドタイムアウト' })
             checkProcess.kill()
             resolve({ ready: false, error: 'Command timeout' })
           }
         }, 5000)
       })
     } catch (error) {
+      this.emit('log', { level: 'error', message: `SUIクライアント確認エラー: ${error instanceof Error ? error.message : 'Unknown error'}` })
       return { ready: false, error: error instanceof Error ? error.message : 'Unknown error' }
     }
   }
 
   private async checkRPCEndpoint(port: string = '9000'): Promise<{ ready: boolean; error?: string }> {
+    this.emit('log', { level: 'info', message: `RPC接続確認開始 (ポート: ${port})` })
+    
     try {
       const { spawn } = await import('child_process')
       
       return new Promise((resolve) => {
         // curlでRPCエンドポイントの確認
+        this.emit('log', { level: 'info', message: `curlコマンドでRPC接続テスト中...` })
         const checkProcess = spawn('curl', [
           '-X', 'POST',
           '-H', 'Content-Type: application/json',
-          '-d', '{"jsonrpc":"2.0","method":"sui_getLatestSuiSystemState","params":[],"id":1}',
+          '-d', '{"jsonrpc":"2.0","method":"suix_getLatestSuiSystemState","params":[],"id":1}',
           `http://localhost:${port}`,
           '--connect-timeout', '3',
           '--max-time', '5',
@@ -1012,18 +1105,21 @@ export class SuiService extends EventEmitter {
         
         checkProcess.on('close', (code) => {
           if (code === 0 && output.includes('jsonrpc')) {
-            // RPCエンドポイントが応答している
+            this.emit('log', { level: 'info', message: `RPC接続成功 (ポート: ${port})` })
             resolve({ ready: true })
           } else {
+            this.emit('log', { level: 'info', message: `RPC接続失敗 (ポート: ${port}, code: ${code}, error: ${errorOutput})` })
             resolve({ ready: false, error: errorOutput || 'No valid RPC response' })
           }
         })
         
         checkProcess.on('error', (error) => {
+          this.emit('log', { level: 'info', message: `RPC接続curlエラー: ${error.message}` })
           resolve({ ready: false, error: error.message })
         })
       })
     } catch (error) {
+      this.emit('log', { level: 'error', message: `RPC接続確認エラー: ${error instanceof Error ? error.message : 'Unknown error'}` })
       return { ready: false, error: error instanceof Error ? error.message : 'Unknown error' }
     }
   }
@@ -1181,7 +1277,7 @@ export class SuiService extends EventEmitter {
         // RPCは応答するがクライアントコマンドが失敗する場合
         this.emit('log', { level: 'info', message: 'RPC接続確認済み、クライアント設定を確認中...' })
       } else {
-        this.emit('log', { level: 'debug', message: `RPC確認失敗: ${rpcCheck.error}` })
+        this.emit('log', { level: 'info', message: `RPC確認失敗: ${rpcCheck.error}` })
       }
       
       // 3秒後に再試行（無限ループ、実際のネットワーク状態で判断）

@@ -84,7 +84,48 @@ const Dashboard: React.FC = () => {
     // 初期状態の取得
     refreshStatus()
 
+    // リアルタイム更新のためのイベントリスナー設定
+    if (window.electronAPI) {
+      // ネットワーク状態変更の監視
+      window.electronAPI.sui.onStatusChange((status) => {
+        setNetworkStatus(status)
+      })
 
+      // SUIサービスからのログ
+      window.electronAPI.sui.onLog((log) => {
+        const formattedLog = {
+          timestamp: new Date().toISOString(),
+          level: log.level as 'info' | 'warn' | 'error' | 'debug',
+          message: log.message,
+          source: 'SUI'
+        }
+        setLogs(prev => [formattedLog, ...prev].slice(0, 100))
+        
+        // 自動スクロール
+        setTimeout(() => {
+          if (logListRef.current) {
+            logListRef.current.scrollTop = 0
+          }
+        }, 100)
+      })
+
+      // リアルタイムログ更新
+      window.electronAPI.logs.onNewLog((newLog) => {
+        setLogs(prev => [newLog, ...prev].slice(0, 100)) // 最新100件を保持
+        
+        // 自動スクロール（新しいログが追加されたとき）
+        setTimeout(() => {
+          if (logListRef.current) {
+            logListRef.current.scrollTop = 0
+          }
+        }, 100)
+      })
+
+      // ログクリア時の処理
+      window.electronAPI.logs.onLogsCleared(() => {
+        setLogs([])
+      })
+    }
 
     // 初期ログロード
     loadInitialLogs()
@@ -105,6 +146,12 @@ const Dashboard: React.FC = () => {
 
     // クリーンアップ
     return () => {
+      // イベントリスナーのクリーンアップ
+      if (window.electronAPI) {
+        window.electronAPI.sui.removeAllListeners()
+        window.electronAPI.logs.removeAllListeners()
+      }
+      
       // プロセス監視の停止
       if (processMonitorIntervalRef.current) {
         clearInterval(processMonitorIntervalRef.current)
@@ -139,9 +186,17 @@ const Dashboard: React.FC = () => {
     }
   }
 
-  const refreshStatus = async (preserveRunningState = false) => {
+  const refreshStatus = async (preserveRunningState = false, updateFromRPC = false) => {
+    console.log(`refreshStatus呼び出し - preserveRunningState: ${preserveRunningState}, updateFromRPC: ${updateFromRPC}`)
     try {
       if (window.electronAPI) {
+        // RPC経由で最新情報を取得する場合
+        if (updateFromRPC) {
+          console.log('updateNetworkStatusを呼び出し中...')
+          await window.electronAPI.sui.updateNetworkStatus()
+          console.log('updateNetworkStatus呼び出し完了')
+        }
+        
         const status = await window.electronAPI.sui.getStatus()
         
         if (preserveRunningState) {
@@ -173,8 +228,8 @@ const Dashboard: React.FC = () => {
             running: true
           }))
           
-          // 詳細なネットワーク状態も取得（running状態を維持）
-          await refreshStatus(true)
+          // 詳細なネットワーク状態も取得（running状態を維持、RPC経由で更新）
+          await refreshStatus(true, true)
         } else if (!result.found || result.processes.length === 0) {
           // プロセスが見つからない場合は、SuiServiceの状態を確認してから決定
           const suiStatus = await window.electronAPI.sui.getStatus()
@@ -481,9 +536,11 @@ const Dashboard: React.FC = () => {
                 <Button
                   variant="outlined"
                   startIcon={<RefreshIcon />}
-                  onClick={() => {
-                    refreshStatus()
-                    detectExistingProcesses()
+                  onClick={async () => {
+                    console.log('状態更新ボタンクリック - updateNetworkStatusを呼び出します')
+                    await refreshStatus(false, true)
+                    await detectExistingProcesses()
+                    console.log('状態更新ボタン処理完了')
                   }}
                   disabled={false}
                 >

@@ -8,6 +8,10 @@ export interface ElectronAPI {
       blockHeight: number
       transactions: number
     }>
+    updateNetworkStatus: (port?: string) => Promise<{
+      success: boolean
+      message?: string
+    }>
     checkInstallation: () => Promise<{
       installed: boolean
       version: string
@@ -66,6 +70,11 @@ export interface ElectronAPI {
       success: boolean
       message: string
     }>
+    
+    // イベントリスナー
+    onStatusChange: (callback: (status: any) => void) => void
+    onLog: (callback: (log: any) => void) => void
+    removeAllListeners: () => void
   }
   
   config: {
@@ -79,12 +88,18 @@ export interface ElectronAPI {
   }
 
   logs: {
-    getLogs: () => Promise<Array<{
+    getLogs: (filter?: any) => Promise<Array<{
       timestamp: string
       level: string
       message: string
     }>>
-    exportLogs: () => Promise<{ success: boolean; path?: string }>
+    exportLogs: (filePath?: string) => Promise<{ success: boolean; path?: string }>
+    clearLogs: () => Promise<{ success: boolean }>
+    
+    // イベントリスナー
+    onNewLog: (callback: (log: any) => void) => void
+    onLogsCleared: (callback: () => void) => void
+    removeAllListeners: () => void
   }
 
   system: {

@@ -8,7 +8,8 @@
       "Bash(sui:*)",
       "Bash(timeout:*)",
       "Bash(gtimeout:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(grep:*)"
     ],
     "deny": []
   }
